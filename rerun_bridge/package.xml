@@ -10,9 +10,11 @@
   <depend>nav_msgs</depend>
   <depend>roscpp</depend>
   <depend>roslib</depend>
+  <depend>rospy</depend>
   <depend>sensor_msgs</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_msgs</depend>
   <depend>yaml-cpp</depend>
+  <depend>visualization_msgs</depend>
   <buildtool_depend>catkin</buildtool_depend>
 </package>

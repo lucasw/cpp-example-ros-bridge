@@ -5,7 +5,7 @@ if(NOT DEFINED CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
 
-find_package(catkin REQUIRED COMPONENTS roscpp roslib sensor_msgs nav_msgs geometry_msgs cv_bridge tf2_ros tf2_msgs)
+find_package(catkin REQUIRED COMPONENTS roscpp rospy roslib sensor_msgs nav_msgs geometry_msgs cv_bridge tf2_ros tf2_msgs visualization_msgs)
 find_package(OpenCV REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
