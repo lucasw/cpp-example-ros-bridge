@@ -9,6 +9,7 @@ adapted from rerun/examples/python/ros_node
 """
 
 import argparse
+import sys
 
 import rospy
 import rerun as rr
@@ -19,6 +20,7 @@ from tf2_ros import (
     TransformListener,
 )
 from visualization_msgs.msg import (
+    Marker,
     MarkerArray,
 )
 
@@ -75,7 +77,23 @@ def make_grid(spacing=1.0,
         grid_strips.append([[x0, yc, z0], [x1, yc, z0]])
         colors.append(color)
 
+    # TODO(lucasw) use radii
     return rr.LineStrips3D(grid_strips, colors=colors)
+
+
+def marker_to_line_strip(marker: Marker,
+                         radius=0.025,
+                         ) -> rr.LineStrips3D:
+    strips = []
+    colors = []
+    radii = []
+    for pt in marker.points:
+        radii.append(radius)
+        strips.append([pt.x, pt.y, pt.z])
+    colors.append([int(marker.color.r * 255), int(marker.color.g * 255),
+                   int(marker.color.b * 255), int(marker.color.a * 255)])
+
+    return rr.LineStrips3D([strips], colors=colors)
 
 
 class RosMarkerToRerun():
@@ -84,7 +102,8 @@ class RosMarkerToRerun():
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer)
 
-        self.parent_frame = rospy.get_param("~frame", "odom")
+        self.parent_frame = rospy.get_param("~frame", "map")
+        rospy.logwarn(self.parent_frame)
 
         rospy.loginfo("creating grid")
         # Log a bounding box as a visual placeholder for the map
@@ -121,18 +140,24 @@ class RosMarkerToRerun():
             # will be confused?
             rr.set_time_seconds("ros_time", marker.header.stamp.to_sec())
             # rr.log(marker.header.frame_id, rr_tbd)
-            self.log_tf_as_transform3d(self.tf_buffer, self.parent_frame,
-                                       marker.header.frame_id, marker.header.stamp)
+            log_tf_as_transform3d(self.tf_buffer, self.parent_frame,
+                                  marker.header.frame_id, marker.header.stamp)
+            strip = marker_to_line_strip(marker)
+            rr_name = f"{marker.header.frame_id}/{marker.ns}/{marker.id}"
+            rospy.loginfo_throttle(4.0, f"{self.parent_frame} {rr_name}")
+            rr.log(rr_name, strip)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Simple example of a ROS node that republishes to Rerun.")
     rr.script_add_args(parser)
-    args, unknownargs = parser.parse_known_args()
+    args, unknown_args = parser.parse_known_args()
     rr.script_setup(args, "ros_marker_to_rerun")
 
-    # Any remaining args go to rclpy
-    rospy.init_node("ros_marker_to_rerun")
+    # Any remaining args go to rospy
+    rospy_args = [sys.argv[0]]
+    rospy_args.extend(unknown_args)
+    rospy.init_node("ros_marker_to_rerun", argv=rospy_args)
 
     _ = RosMarkerToRerun()
 
