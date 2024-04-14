@@ -13,7 +13,9 @@ import sys
 
 import rospy
 import rerun as rr
+import tf
 from geometry_msgs.msg import TransformStamped
+from std_msgs.msg import ColorRGBA
 from tf2_ros import (
     Buffer,
     TransformException,
@@ -81,19 +83,65 @@ def make_grid(spacing=1.0,
     return rr.LineStrips3D(grid_strips, colors=colors)
 
 
-def marker_to_line_strip(marker: Marker,
-                         radius=0.025,
-                         ) -> rr.LineStrips3D:
-    strips = []
-    colors = []
-    radii = []
-    for pt in marker.points:
-        radii.append(radius)
-        strips.append([pt.x, pt.y, pt.z])
-    colors.append([int(marker.color.r * 255), int(marker.color.g * 255),
-                   int(marker.color.b * 255), int(marker.color.a * 255)])
+def marker_color_to_rr(marker_color: ColorRGBA) -> list[int]:
+    """
+    convert 4 0-1.0 floats to 4 0-255 integers
+    """
+    return [int(marker_color.r * 255), int(marker_color.g * 255),
+            int(marker_color.b * 255), int(marker_color.a * 255)]
 
-    return rr.LineStrips3D([strips], colors=colors)
+
+def marker_to_rr(marker: Marker,
+                 radius=0.025,
+                 ) -> rr.LineStrips3D:
+    origin = [marker.pose.position.x,
+              marker.pose.position.y,
+              marker.pose.position.z]
+    color = marker_color_to_rr(marker.color)
+    mpo = marker.pose.orientation
+    rotation = rr.Quaternion(xyzw=[mpo.x, mpo.y, mpo.z, mpo.w])
+
+    if marker.type == Marker.ARROW:
+        # TODO(lucasw) the arrow isn't right
+        rot_matrix = tf.transformations.quaternion_matrix([mpo.x, mpo.y, mpo.z, mpo.w])
+        vector = (rot_matrix[0, 0:3] * marker.scale.x).tolist()
+        return rr.Arrows3D(origins=[origin], vectors=[vector], colors=[color],
+                           radii=[marker.scale.y])
+
+    elif marker.type == Marker.CUBE:
+        return rr.Boxes3D(centers=[origin],
+                          half_sizes=[[marker.scale.x, marker.scale.y, marker.scale.z]],
+                          rotations=[rotation],
+                          radii=radius,
+                          colors=[color])
+
+    elif marker.type == Marker.LINE_STRIP:
+        strips = []
+        # radii = []
+        for pt in marker.points:
+            # radii.append(marker.scale.x)
+            # TODO(lucasw) this ignores the rotation
+            strips.append([origin[0] + pt.x, origin[1] + pt.y, origin[2] + pt.z])
+        return rr.LineStrips3D([strips], colors=[color])
+    elif marker.type == Marker.LINE_LIST:
+        strips = []
+        colors = []
+        # radii = []
+        count = 0
+        for pt in marker.points:
+            if count % 2 == 0:
+                strips.append([])
+                # colors.append([])
+                colors.append(color)
+            # radii.append(marker.scale.x)
+            # TODO(lucasw) this ignores the rotation
+            strips[-1].append([origin[0] + pt.x, origin[1] + pt.y, origin[2] + pt.z])
+            # colors[-1].append(color)
+            count += 1
+        return rr.LineStrips3D(strips, colors=colors)
+    else:
+        rospy.logwarn(f"unsupported {marker.type}")
+        return None
 
 
 class RosMarkerToRerun():
@@ -142,10 +190,12 @@ class RosMarkerToRerun():
             # rr.log(marker.header.frame_id, rr_tbd)
             log_tf_as_transform3d(self.tf_buffer, self.parent_frame,
                                   marker.header.frame_id, marker.header.stamp)
-            strip = marker_to_line_strip(marker)
+            rr_marker = marker_to_rr(marker)
+            if rr_marker is None:
+                continue
             rr_name = f"{marker.header.frame_id}/{marker.ns}/{marker.id}"
             rospy.loginfo_throttle(4.0, f"{self.parent_frame} {rr_name}")
-            rr.log(rr_name, strip)
+            rr.log(rr_name, rr_marker)
 
 
 def main():
