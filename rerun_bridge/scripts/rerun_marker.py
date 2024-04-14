@@ -6,6 +6,9 @@ April 2024
 Turn an rviz MarkerArray into a Rerun visualization
 
 adapted from rerun/examples/python/ros_node
+
+Use with https://github.com/lucasw/visualization_tutorials/blob/obese-aggregated/visualization_marker_tutorials/scripts/example_marker_array.py
+# noqa: E501
 """
 
 import argparse
