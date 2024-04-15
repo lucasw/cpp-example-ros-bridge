@@ -62,8 +62,8 @@ def log_tf_as_transform3d(tf_buffer: Buffer,
 
 def make_grid(spacing=1.0,
               num=10,
-              color=[200, 200, 200],
-              radius=0.025,
+              color=[200, 200, 200, 128],
+              radius=0.005,
               ) -> rr.LineStrips3D:
     x0 = -spacing * num * 0.5
     x1 = spacing * num * 0.5
@@ -76,14 +76,16 @@ def make_grid(spacing=1.0,
     for i in range(num + 1):
         xc = x0 + i * spacing
         yc = y0 + i * spacing
+
         grid_strips.append([[xc, y0, z0], [xc, y1, z0]])
         colors.append(color)
         radii.append(radius)
+
         grid_strips.append([[x0, yc, z0], [x1, yc, z0]])
         colors.append(color)
+        radii.append(radius)
 
-    # TODO(lucasw) use radii
-    return rr.LineStrips3D(grid_strips, colors=colors)
+    return rr.LineStrips3D(grid_strips, colors=colors, radii=radii)
 
 
 def marker_color_to_rr(marker_color: ColorRGBA) -> list[int]:
@@ -95,7 +97,7 @@ def marker_color_to_rr(marker_color: ColorRGBA) -> list[int]:
 
 
 def marker_to_rr(marker: Marker,
-                 radius=0.025,
+                 radius=0.005,
                  ) -> rr.LineStrips3D:
     origin = [marker.pose.position.x,
               marker.pose.position.y,
@@ -113,10 +115,21 @@ def marker_to_rr(marker: Marker,
 
     elif marker.type == Marker.CUBE:
         return rr.Boxes3D(centers=[origin],
-                          half_sizes=[[marker.scale.x, marker.scale.y, marker.scale.z]],
+                          half_sizes=[[marker.scale.x * 0.5, marker.scale.y * 0.5, marker.scale.z * 0.5]],
                           rotations=[rotation],
                           radii=radius,
                           colors=[color])
+
+    elif marker.type == Marker.SPHERE:
+        # TODO(lucasw) rviz spheres can be squashed/extended with scale xyz (each is diameter)
+        # (though I'm not seeing that working right now with example_marker_array.py)
+        return rr.Points3D([origin], colors=[color], radii=[marker.scale.x * 0.5])
+
+    elif marker.type == Marker.CYLINDER:
+        rospy.logwarn_throttle(8.0, "need to construct a rerun Mesh3D cylinder")
+        # TODO(lucasw) is there a light weight mesh generation python library- maybe pymesh, or pygalmesh?
+        # or copy paste standalone functions here
+        return rr.Points3D([origin], colors=[color], radii=[marker.scale.x * 0.5])
 
     elif marker.type == Marker.LINE_STRIP:
         strips = []
@@ -126,6 +139,7 @@ def marker_to_rr(marker: Marker,
             # TODO(lucasw) this ignores the rotation
             strips.append([origin[0] + pt.x, origin[1] + pt.y, origin[2] + pt.z])
         return rr.LineStrips3D([strips], colors=[color])
+
     elif marker.type == Marker.LINE_LIST:
         strips = []
         colors = []
@@ -142,6 +156,53 @@ def marker_to_rr(marker: Marker,
             # colors[-1].append(color)
             count += 1
         return rr.LineStrips3D(strips, colors=colors)
+
+    elif marker.type == Marker.CUBE_LIST:
+        centers = []
+        half_sizes = []
+        colors = []
+        for pt in marker.points:
+            # TODO(lucasw) this ignores the rotation
+            centers.append([origin[0] + pt.x, origin[1] + pt.y, origin[2] + pt.z])
+            half_sizes.append([marker.scale.x * 0.5, marker.scale.y * 0.5, marker.scale.z * 0.5])
+            colors.append(color)
+
+        return rr.Boxes3D(centers=centers,
+                          half_sizes=half_sizes,
+                          # rotations=[rotation],
+                          # TODO(lucasw) need to make a mesh for solid boxes?
+                          radii=radius,
+                          colors=colors)
+
+    elif marker.type in [Marker.SPHERE_LIST, Marker.POINTS]:
+        # TODO(lucasw) there isn't a rerun primitive for viewer aligned squares which is how rviz
+        # renders Marker.POINTS, so using spheres for now
+
+        centers = []
+        radii = []
+        colors = []
+        for pt in marker.points:
+            # TODO(lucasw) this ignores the rotation, need to create a transform for that
+            centers.append([origin[0] + pt.x, origin[1] + pt.y, origin[2] + pt.z])
+            radii.append(marker.scale.x * 0.5)
+            colors.append(color)
+
+        return rr.Points3D(centers, colors=colors, radii=radii)
+
+    elif marker.type == Marker.TEXT_VIEW_FACING:
+        return rr.Points3D([origin], colors=[color], radii=[0.0], labels=[marker.text])
+
+    elif marker.type == Marker.TRIANGLE_LIST:
+        points = []
+        colors = []
+        for pt in marker.points:
+            # TODO(lucasw) this ignores the rotation, need to create a transform for that
+            points.append([origin[0] + pt.x, origin[1] + pt.y, origin[2] + pt.z])
+            # TODO(lucasw) if the marker colors list is populated then use those
+            colors.append(color)
+
+        return rr.Mesh3D(vertex_positions=points, vertex_colors=colors)
+
     else:
         rospy.logwarn(f"unsupported {marker.type}")
         return None
