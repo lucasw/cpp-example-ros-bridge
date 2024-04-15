@@ -16,8 +16,10 @@ import sys
 
 import rospy
 import rerun as rr
-import tf
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import (
+    Pose,
+    TransformStamped,
+)
 from std_msgs.msg import ColorRGBA
 from tf2_ros import (
     Buffer,
@@ -28,6 +30,14 @@ from visualization_msgs.msg import (
     Marker,
     MarkerArray,
 )
+
+
+def ros_pose_to_rr_transform(pose: Pose) -> rr.Transform3D:
+    t = pose.position
+    translation = [t.x, t.y, t.z]
+    q = pose.orientation
+    rotation = rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w])
+    return rr.Transform3D(translation=translation, rotation=rotation)
 
 
 def ros_to_rr_transform(transform: TransformStamped) -> rr.Transform3D:
@@ -53,7 +63,8 @@ def log_tf_as_transform3d(tf_buffer: Buffer,
         tr = tf_buffer.lookup_transform(parent_frame, child_frame,
                                         stamp, timeout=rospy.Duration(timeout))
         rr_transform = ros_to_rr_transform(tr)
-        rr.log(child_frame, rr_transform)
+        rr_name = f"{parent_frame}/{child_frame}"
+        rr.log(rr_name, rr_transform)
         return True
     except TransformException as ex:
         rospy.logwarn_throttle(8.0, f"Failed to get transform: {ex}")
@@ -97,48 +108,50 @@ def marker_color_to_rr(marker_color: ColorRGBA) -> list[int]:
 
 
 def marker_to_rr(marker: Marker,
+                 parent_frame: str,
                  radius=0.005,
-                 ) -> rr.LineStrips3D:
-    origin = [marker.pose.position.x,
-              marker.pose.position.y,
-              marker.pose.position.z]
+                 ) -> (rr.LineStrips3D, str, rr.Transform3D):
+    origin = [0.0, 0.0, 0.0]
     color = marker_color_to_rr(marker.color)
-    mpo = marker.pose.orientation
-    rotation = rr.Quaternion(xyzw=[mpo.x, mpo.y, mpo.z, mpo.w])
+    # mpo = marker.pose.orientation
+    # rotation = rr.Quaternion(xyzw=[mpo.x, mpo.y, mpo.z, mpo.w])
+
+    rr_name = f"{parent_frame}/{marker.header.frame_id}/{marker.ns}/{marker.id}"
+    rr_transform = ros_pose_to_rr_transform(marker.pose)
+    rr_marker = None
 
     if marker.type == Marker.ARROW:
         # TODO(lucasw) the arrow isn't right
-        rot_matrix = tf.transformations.quaternion_matrix([mpo.x, mpo.y, mpo.z, mpo.w])
-        vector = (rot_matrix[0, 0:3] * marker.scale.x).tolist()
-        return rr.Arrows3D(origins=[origin], vectors=[vector], colors=[color],
-                           radii=[marker.scale.y])
+        # rot_matrix = tf.transformations.quaternion_matrix([mpo.x, mpo.y, mpo.z, mpo.w])
+        vector = [marker.scale.x, 0.0, 0.0]  # (rot_matrix[0, 0:3] * marker.scale.x).tolist()
+        rr_marker = rr.Arrows3D(origins=[origin], vectors=[vector], colors=[color],
+                                radii=[marker.scale.y * 0.5])
 
     elif marker.type == Marker.CUBE:
-        return rr.Boxes3D(centers=[origin],
-                          half_sizes=[[marker.scale.x * 0.5, marker.scale.y * 0.5, marker.scale.z * 0.5]],
-                          rotations=[rotation],
-                          radii=radius,
-                          colors=[color])
+        rr_marker = rr.Boxes3D(centers=[origin],
+                               half_sizes=[[marker.scale.x * 0.5, marker.scale.y * 0.5, marker.scale.z * 0.5]],
+                               # rotations=[rotation],
+                               radii=radius,
+                               colors=[color])
 
     elif marker.type == Marker.SPHERE:
         # TODO(lucasw) rviz spheres can be squashed/extended with scale xyz (each is diameter)
         # (though I'm not seeing that working right now with example_marker_array.py)
-        return rr.Points3D([origin], colors=[color], radii=[marker.scale.x * 0.5])
+        rr_marker = rr.Points3D([origin], colors=[color], radii=[marker.scale.x * 0.5])
 
     elif marker.type == Marker.CYLINDER:
         rospy.logwarn_throttle(8.0, "need to construct a rerun Mesh3D cylinder")
         # TODO(lucasw) is there a light weight mesh generation python library- maybe pymesh, or pygalmesh?
         # or copy paste standalone functions here
-        return rr.Points3D([origin], colors=[color], radii=[marker.scale.x * 0.5])
+        rr_marker = rr.Points3D([origin], colors=[color], radii=[marker.scale.x * 0.5])
 
     elif marker.type == Marker.LINE_STRIP:
         strips = []
         # radii = []
         for pt in marker.points:
             # radii.append(marker.scale.x)
-            # TODO(lucasw) this ignores the rotation
-            strips.append([origin[0] + pt.x, origin[1] + pt.y, origin[2] + pt.z])
-        return rr.LineStrips3D([strips], colors=[color])
+            strips.append([pt.x, pt.y, pt.z])
+        rr_marker = rr.LineStrips3D([strips], colors=[color])
 
     elif marker.type == Marker.LINE_LIST:
         strips = []
@@ -151,28 +164,26 @@ def marker_to_rr(marker: Marker,
                 # colors.append([])
                 colors.append(color)
             # radii.append(marker.scale.x)
-            # TODO(lucasw) this ignores the rotation
-            strips[-1].append([origin[0] + pt.x, origin[1] + pt.y, origin[2] + pt.z])
+            strips[-1].append([pt.x, pt.y, pt.z])
             # colors[-1].append(color)
             count += 1
-        return rr.LineStrips3D(strips, colors=colors)
+        rr_marker = rr.LineStrips3D(strips, colors=colors)
 
     elif marker.type == Marker.CUBE_LIST:
         centers = []
         half_sizes = []
         colors = []
         for pt in marker.points:
-            # TODO(lucasw) this ignores the rotation
-            centers.append([origin[0] + pt.x, origin[1] + pt.y, origin[2] + pt.z])
+            centers.append([pt.x, pt.y, pt.z])
             half_sizes.append([marker.scale.x * 0.5, marker.scale.y * 0.5, marker.scale.z * 0.5])
             colors.append(color)
 
-        return rr.Boxes3D(centers=centers,
-                          half_sizes=half_sizes,
-                          # rotations=[rotation],
-                          # TODO(lucasw) need to make a mesh for solid boxes?
-                          radii=radius,
-                          colors=colors)
+        rr_marker = rr.Boxes3D(centers=centers,
+                               half_sizes=half_sizes,
+                               # rotations=[rotation],
+                               # TODO(lucasw) need to make a mesh for solid boxes?
+                               radii=radius,
+                               colors=colors)
 
     elif marker.type in [Marker.SPHERE_LIST, Marker.POINTS]:
         # TODO(lucasw) there isn't a rerun primitive for viewer aligned squares which is how rviz
@@ -182,30 +193,30 @@ def marker_to_rr(marker: Marker,
         radii = []
         colors = []
         for pt in marker.points:
-            # TODO(lucasw) this ignores the rotation, need to create a transform for that
-            centers.append([origin[0] + pt.x, origin[1] + pt.y, origin[2] + pt.z])
+            centers.append([pt.x, pt.y, pt.z])
             radii.append(marker.scale.x * 0.5)
             colors.append(color)
 
-        return rr.Points3D(centers, colors=colors, radii=radii)
+        rr_marker = rr.Points3D(centers, colors=colors, radii=radii)
 
     elif marker.type == Marker.TEXT_VIEW_FACING:
-        return rr.Points3D([origin], colors=[color], radii=[0.0], labels=[marker.text])
+        rr_marker = rr.Points3D([origin], colors=[color], radii=[0.0], labels=[marker.text])
 
     elif marker.type == Marker.TRIANGLE_LIST:
         points = []
         colors = []
         for pt in marker.points:
             # TODO(lucasw) this ignores the rotation, need to create a transform for that
-            points.append([origin[0] + pt.x, origin[1] + pt.y, origin[2] + pt.z])
+            points.append([pt.x, pt.y, pt.z])
             # TODO(lucasw) if the marker colors list is populated then use those
             colors.append(color)
 
-        return rr.Mesh3D(vertex_positions=points, vertex_colors=colors)
+        rr_marker = rr.Mesh3D(vertex_positions=points, vertex_colors=colors)
 
     else:
         rospy.logwarn(f"unsupported {marker.type}")
-        return None
+
+    return rr_marker, rr_name, rr_transform
 
 
 class RosMarkerToRerun():
@@ -217,17 +228,20 @@ class RosMarkerToRerun():
         self.parent_frame = rospy.get_param("~frame", "map")
         rospy.logwarn(self.parent_frame)
 
+        # collect some tf transforms
+        rospy.sleep(1.0)
+
         rospy.loginfo("creating grid")
         # Log a bounding box as a visual placeholder for the map
         if False:
             rr.log(
-                "map/box",
+                f"{self.parent_frame}/box",
                 rr.Boxes3D(half_sizes=[3, 3, 1], centers=[0, 0, 1], colors=[255, 255, 255, 255]),
                 timeless=True,
             )
 
         rr.log(
-            "map/grid",
+            f"{self.parent_frame}/grid",
             make_grid(),
             timeless=True,
         )
@@ -254,11 +268,12 @@ class RosMarkerToRerun():
             # rr.log(marker.header.frame_id, rr_tbd)
             log_tf_as_transform3d(self.tf_buffer, self.parent_frame,
                                   marker.header.frame_id, marker.header.stamp)
-            rr_marker = marker_to_rr(marker)
+            rr_marker, rr_name, rr_transform = marker_to_rr(marker, self.parent_frame)
+            rr.log(rr_name, rr_transform)
             if rr_marker is None:
                 continue
-            rr_name = f"{marker.header.frame_id}/{marker.ns}/{marker.id}"
-            rospy.loginfo_throttle(4.0, f"{self.parent_frame} {rr_name}")
+            # if "curve" in marker.ns:
+            #     rospy.loginfo_throttle(0.0, f"{rr_name} {marker.ns} {marker.id}")
             rr.log(rr_name, rr_marker)
 
 
@@ -266,12 +281,15 @@ def main():
     parser = argparse.ArgumentParser(description="Simple example of a ROS node that republishes to Rerun.")
     rr.script_add_args(parser)
     args, unknown_args = parser.parse_known_args()
-    rr.script_setup(args, "ros_marker_to_rerun")
 
     # Any remaining args go to rospy
     rospy_args = [sys.argv[0]]
     rospy_args.extend(unknown_args)
     rospy.init_node("ros_marker_to_rerun", argv=rospy_args)
+
+    recording_id = rospy.get_param("~recording_id", "ros_to_rerun")
+
+    rr.script_setup(args, "ros_marker_to_rerun", recording_id=recording_id)
 
     _ = RosMarkerToRerun()
 
