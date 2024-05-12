@@ -51,5 +51,6 @@ install(DIRECTORY
 
 install(PROGRAMS
   scripts/rerun_marker.py
+  scripts/rerun_pointcloud2.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

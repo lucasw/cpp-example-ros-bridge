@@ -47,3 +47,6 @@ def log_tf_as_transform3d(tf_buffer: Buffer,
     except TransformException as ex:
         rospy.logwarn_throttle(8.0, f"Failed to get transform: {ex}")
         return False
+    except rospy.exceptions.ROSTimeMovedBackwardsException as ex:
+        rospy.logwarn(ex)
+        return False
